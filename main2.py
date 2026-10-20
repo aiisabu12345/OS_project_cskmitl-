@@ -28,7 +28,7 @@ with open(CAR_LIST_PATH, encoding="utf-8") as f:
 
 # === UTILS ===
 def pi_capture():
-    cam = cv2.VideoCapture(0)
+    cam = cv2.VideoCapture("/dev/video1", cv2.CAP_V4L2)
 
     if not cam.isOpened():
         raise RuntimeError("เปิดกล้องไม่ได้")
