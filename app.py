@@ -1,9 +1,7 @@
 from pathlib import Path
-import time
+import json
 
 import streamlit as st
-
-from ocr import read_license_plate
 
 BASE_DIR = Path(__file__).parent
 IMAGES_DIR = BASE_DIR / "images"
@@ -36,7 +34,7 @@ st.markdown(
 )
 
 st.title("Thai License Plate OCR")
-st.caption(f"ระบบจะอ่านรูปให้อัตโนมัติ")
+st.caption("กดปุ่มเพื่อถ่ายรูป ระบบจะอ่านป้ายและตรวจสอบสิทธิ์ให้อัตโนมัติ")
 
 
 def latest_image():
@@ -46,33 +44,30 @@ def latest_image():
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
-def file_signature(path: Path):
-    stat = path.stat()
-    return (path.name, stat.st_mtime_ns, stat.st_size)
-
-
-def run_ocr(path: Path):
+def load_report(path: Path):
+    """อ่านผลที่ main2.py เขียนไว้คู่กับรูป; None = ยังประมวลผลไม่เสร็จ"""
+    report = path.with_suffix(".json")
+    if not report.exists():
+        return None
     try:
-        result = read_license_plate(str(path))
-        if result is None:
-            return {"error": "เรียก API ไม่สำเร็จ (ดูรายละเอียดใน Terminal)"}
-        return {"result": result}
-    except Exception as e:
-        return {"error": str(e)}
+        return json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"allowed": False, "message": f"อ่านผลไม่ได้: {e}", "result": None}
 
 
-def show_result(path: Path, outcome: dict):
-    st.image(str(path), caption=path.name, use_container_width=True)
+def show_result(path: Path, report: dict):
+    st.image(str(path), caption=path.name, width="stretch")
 
-    if "error" in outcome:
-        st.error(outcome["error"])
-        return
+    if report["allowed"]:
+        st.success("✅ อนุญาตให้ผ่าน")
+    else:
+        st.error(f"⛔ ไม่อนุญาตให้ผ่าน — {report['message']}")
 
-    result = outcome["result"]
-    if not result.get("success"):
-        st.error("OCR ไม่สำเร็จ")
-        with st.expander("ดู API Response"):
-            st.json(result)
+    result = report.get("result")
+    if not result or not result.get("success"):
+        if result:
+            with st.expander("ดู API Response"):
+                st.json(result)
         return
 
     data = result.get("data", {}) or {}
@@ -110,29 +105,16 @@ def watcher():
     path = latest_image()
 
     if path is None:
-        st.session_state.pop("signature", None)
-        st.session_state.pop("outcome", None)
-        st.info("📭 ไม่พบรูปภาพ — กำลังรอรูปภาพ...")
+        st.info("📭 ยังไม่มีรูป — กดปุ่มเพื่อถ่ายรูป")
         return
 
-    # รูปเพิ่งถูกวาง/ยังคัดลอกไม่เสร็จ ให้รอรอบถัดไป
-    if time.time() - path.stat().st_mtime < 1:
-        st.info("⏳ กำลังรับไฟล์...")
+    report = load_report(path)
+    if report is None:
+        st.image(str(path), caption=path.name, width="stretch")
+        st.info("⏳ กำลังอ่านป้ายทะเบียน...")
         return
 
-    sig = file_signature(path)
-
-    if st.session_state.get("signature") != sig:
-        with st.spinner(f"กำลังอ่านรูป {path.name} ..."):
-            st.session_state["outcome"] = run_ocr(path)
-        st.session_state["signature"] = sig
-
-    show_result(path, st.session_state["outcome"])
-
-    if "error" in st.session_state["outcome"]:
-        if st.button("🔄 ลองอ่านใหม่"):
-            st.session_state.pop("signature", None)
-            st.rerun(scope="fragment")
+    show_result(path, report)
 
 
 watcher()

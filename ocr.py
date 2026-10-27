@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 from dotenv import load_dotenv
+import cv2
 
 load_dotenv()
 
@@ -48,3 +49,4 @@ def read_license_plate(image_path):
     result = response.json()
 
     return result
+
