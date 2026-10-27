@@ -1,8 +1,9 @@
-from ocr import read_license_plate_frame
+from ocr import read_license_plate
 from gpiozero import Button, LED
 from pathlib import Path
 from numbers import Real
 from threading import Lock
+import json
 import time
 import cv2
 from signal import pause
@@ -11,6 +12,7 @@ from signal import pause
 CONFIDENCE_THRESHOLD = 0.5
 BUTTON_GPIO = 2
 CAR_LIST_PATH = Path(__file__).with_name("CarList.txt")
+IMAGES_DIR = Path(__file__).with_name("images")
 green_led = LED(17)
 red_led = LED(27)
 processing_lock = Lock()
@@ -19,7 +21,9 @@ processing_lock = Lock()
 def normalize_text(value):
     return "".join(str(value).split()).upper()
 
-with open("./CarList.txt",encoding="utf-8") as f:
+IMAGES_DIR.mkdir(exist_ok=True)
+
+with open(CAR_LIST_PATH, encoding="utf-8") as f:
     car_list = [normalize_text(line) for line in f if line.strip()]
 
 # === UTILS ===
@@ -46,9 +50,18 @@ def set_leds(green=False, red=False):
     red_led.value = red
 
 
-def deny_access(message):
-    set_leds(red=True)
+def finish(report_path, allowed, message, result=None):
+    """ตั้ง LED แล้วเขียนผลให้ app.py อ่าน (เขียนผ่าน .tmp กันอ่านไฟล์ที่เขียนไม่เสร็จ)"""
+    set_leds(green=allowed, red=not allowed)
     print(message)
+    if report_path is None:
+        return
+    tmp = report_path.with_name(report_path.name + ".tmp")
+    tmp.write_text(
+        json.dumps({"allowed": allowed, "message": message.strip(), "result": result}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    tmp.replace(report_path)
 
 
 def on_button_pressed():
@@ -56,27 +69,36 @@ def on_button_pressed():
         print("กำลังประมวลผลอยู่ กรุณารอ")
         return
 
+    report_path = None
+    result = None
     try:
         set_leds()
         print("Capturing image...")
         img = pi_capture()
         if img is None:
-            deny_access("ไม่ได้ภาพจากกล้อง")
+            finish(None, False, "ไม่ได้ภาพจากกล้อง")
             return
+
+        stem = time.strftime("%Y%m%d_%H%M%S")
+        image_path = IMAGES_DIR / f"{stem}.jpg"
+        if not cv2.imwrite(str(image_path), img):
+            finish(None, False, "บันทึกรูปไม่สำเร็จ")
+            return
+        report_path = image_path.with_suffix(".json")
 
         print("================================")
         print("     Thai License Plate OCR")
         print("================================")
-        result = read_license_plate_frame(img)
+        result = read_license_plate(str(image_path))
 
         if not result or not result.get("success"):
-            deny_access("\nOCR ไม่สำเร็จ")
+            finish(report_path, False, "\nOCR ไม่สำเร็จ", result)
             return
 
         data = result.get("data") or {}
         plates = data.get("plates") or []
         if not plates or not isinstance(plates[0], dict):
-            deny_access("\nไม่พบทะเบียนรถ")
+            finish(report_path, False, "\nไม่พบทะเบียนรถ", result)
             return
 
         confidence = data.get("confidence_score")
@@ -84,7 +106,7 @@ def on_button_pressed():
             not isinstance(confidence, Real)
             or confidence < CONFIDENCE_THRESHOLD
         ):
-            deny_access("\nความแม่นยำไม่เพียงพอ")
+            finish(report_path, False, "\nความแม่นยำไม่เพียงพอ", result)
             return
 
         plate = plates[0]
@@ -94,7 +116,7 @@ def on_button_pressed():
             data.get("region_text"),
         )
         if not all(isinstance(value, str) and value.strip() for value in values):
-            deny_access("\nข้อมูลทะเบียนไม่ครบ")
+            finish(report_path, False, "\nข้อมูลทะเบียนไม่ครบ", result)
             return
 
         plate_key = tuple(normalize_text(value) for value in values)
@@ -103,12 +125,11 @@ def on_button_pressed():
         print(f"ความแม่นยำ: {confidence:.2f}")
 
         if plate_text in car_list:
-            set_leds(green=True)
-            print("\nอนุญาตให้ผ่าน")
+            finish(report_path, True, "\nอนุญาตให้ผ่าน", result)
         else:
-            deny_access("\nไม่อนุญาตให้ผ่าน")
+            finish(report_path, False, "\nไม่อนุญาตให้ผ่าน", result)
     except Exception as error:
-        deny_access(f"\nเกิดข้อผิดพลาด: {error}")
+        finish(report_path, False, f"\nเกิดข้อผิดพลาด: {error}", result)
     finally:
         processing_lock.release()
 

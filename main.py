@@ -7,6 +7,7 @@ from pathlib import Path
 import webview
 
 APP_PATH = Path(__file__).parent / "app.py"
+GATE_PATH = Path(__file__).parent / "main2.py"
 PORT = 8501
 URL = f"http://localhost:{PORT}"
 
@@ -30,6 +31,8 @@ if __name__ == "__main__":
         "--browser.gatherUsageStats", "false",
     ])
 
+    gate = subprocess.Popen([sys.executable, str(GATE_PATH)])
+
     try:
         if wait_for_server():
             webview.create_window("Thai License Plate OCR", URL, width=1200, height=900)
@@ -37,4 +40,5 @@ if __name__ == "__main__":
         else:
             print("เปิดเซิร์ฟเวอร์ไม่สำเร็จ")
     finally:
+        gate.terminate()
         server.terminate()
