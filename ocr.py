@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 from dotenv import load_dotenv
+import cv2
 
 load_dotenv()
 
