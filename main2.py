@@ -2,7 +2,7 @@ from ocr import read_license_plate
 from gpiozero import Button, LED
 from pathlib import Path
 from numbers import Real
-from threading import Lock
+from threading import Lock, Timer
 import json
 import time
 import cv2
@@ -11,6 +11,7 @@ from signal import pause
 # === CONFIG ====
 CONFIDENCE_THRESHOLD = 0.5
 BUTTON_GPIO = 2
+LED_ON_SECONDS = 5
 CAR_LIST_PATH = Path(__file__).with_name("CarList.txt")
 IMAGES_DIR = Path(__file__).with_name("images")
 green_led = LED(17)
@@ -45,14 +46,25 @@ def pi_capture():
         cam.release()
 
 # === MAIN WORKFLOW ===
+led_timer = None
+
+
 def set_leds(green=False, red=False):
+    global led_timer
+    if led_timer:  # ตั้งไฟใหม่ทุกครั้ง = ยกเลิกตัวจับเวลาเดิม
+        led_timer.cancel()
+        led_timer = None
     green_led.value = green
     red_led.value = red
 
 
 def finish(report_path, allowed, message, result=None):
-    """ตั้ง LED แล้วเขียนผลให้ app.py อ่าน (เขียนผ่าน .tmp กันอ่านไฟล์ที่เขียนไม่เสร็จ)"""
+    """ตั้ง LED (ดับเองหลัง LED_ON_SECONDS) แล้วเขียนผลให้ app.py อ่าน (เขียนผ่าน .tmp กันอ่านไฟล์ที่เขียนไม่เสร็จ)"""
+    global led_timer
     set_leds(green=allowed, red=not allowed)
+    led_timer = Timer(LED_ON_SECONDS, set_leds)
+    led_timer.daemon = True
+    led_timer.start()
     print(message)
     if report_path is None:
         return
